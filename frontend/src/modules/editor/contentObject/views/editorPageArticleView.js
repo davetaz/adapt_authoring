@@ -158,7 +158,31 @@ define(function(require){
       event && event.preventDefault();
 
       this.model.destroy({
-        success: _.bind(this.remove, this),
+        success: _.bind(function(model) {
+          // Keep page-structure cache coherent for subsequent child fetches.
+          var cache = Origin.editor && Origin.editor.pageStructureCache;
+          var articleId = model.get('_id');
+          var parentId = model.get('_parentId');
+          if (cache) {
+            if (cache.article && cache.article[parentId]) {
+              cache.article[parentId] = _.reject(cache.article[parentId], function(item) {
+                return item.get('_id') === articleId;
+              });
+            }
+            if (cache.block && cache.block[articleId]) {
+              var removedBlockIds = _.map(cache.block[articleId], function(block) {
+                return block.get('_id');
+              });
+              delete cache.block[articleId];
+              if (cache.component) {
+                _.each(removedBlockIds, function(blockId) {
+                  delete cache.component[blockId];
+                });
+              }
+            }
+          }
+          this.remove();
+        }, this),
         error: function(error) {
           Origin.Notify.alert({ type: 'error', text: Origin.l10n.t('app.errorgeneric') });
         }

@@ -57,8 +57,19 @@ define(function(require){
     deleteComponent: function() {
       this.model.destroy({
         success: _.bind(function(model) {
+          // Keep page-structure cache coherent so rerenders do not show stale items.
+          var cache = Origin.editor && Origin.editor.pageStructureCache;
+          var parentId = model.get('_parentId');
+          var deletedId = String(model.get('_id'));
+          if (cache && cache.component) {
+            Object.keys(cache.component).forEach(function(bucketKey) {
+              cache.component[bucketKey] = _.reject(cache.component[bucketKey], function(item) {
+                return String(item.get('_id')) === deletedId;
+              });
+            });
+          }
           this.remove();
-          Origin.trigger('editorView:removeComponent:' + model.get('_parentId'));
+          Origin.trigger('editorView:removeComponent:' + parentId);
         }, this),
         error: function(response) {
           console.error(response);

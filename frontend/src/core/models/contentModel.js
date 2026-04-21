@@ -12,10 +12,26 @@ define(function(require) {
     initialize: function(options) {
       this.on('sync', this.loadedData, this);
       this.on('change', this.loadedData, this);
+      this.on('sync', this.invalidatePageStructureCacheOnWrite, this);
+      this.on('destroy', this.invalidatePageStructureCache, this);
     },
 
     loadedData: function() {
       if(this._siblingTypes) this._type = this._siblingTypes;
+    },
+
+    invalidatePageStructureCacheOnWrite: function(model, response, options) {
+      var method = options && options.type && options.type.toUpperCase();
+      // Keep cache for reads, invalidate for writes to avoid stale editor trees.
+      if (method && method !== 'GET') {
+        this.invalidatePageStructureCache();
+      }
+    },
+
+    invalidatePageStructureCache: function() {
+      if (Origin.editor) {
+        Origin.editor.pageStructureCache = null;
+      }
     },
 
     fetchChildren: function(callback) {

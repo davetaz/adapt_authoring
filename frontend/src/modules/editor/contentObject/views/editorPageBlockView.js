@@ -136,7 +136,23 @@ define(function(require){
 
     deleteBlock: function(event) {
       this.model.destroy({
-        success: _.bind(this.remove, this),
+        success: _.bind(function(model) {
+          // Keep page-structure cache coherent for subsequent child fetches.
+          var cache = Origin.editor && Origin.editor.pageStructureCache;
+          var blockId = model.get('_id');
+          var parentId = model.get('_parentId');
+          if (cache) {
+            if (cache.block && cache.block[parentId]) {
+              cache.block[parentId] = _.reject(cache.block[parentId], function(item) {
+                return item.get('_id') === blockId;
+              });
+            }
+            if (cache.component) {
+              delete cache.component[blockId];
+            }
+          }
+          this.remove();
+        }, this),
         error: function(model, response) {
           Origin.Notify.alert({ type: 'error', text: Origin.l10n.t('app.errorgeneric') });
         }
