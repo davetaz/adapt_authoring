@@ -47,17 +47,8 @@ define(function(require) {
       }
     ]);
 
-    var tagsCollection = new TagsCollection();
-
-    tagsCollection.fetch({
-      success: function() {
-        Origin.sidebar.addView(new ProjectsSidebarView({ collection: tagsCollection }).$el);
-        Origin.trigger('dashboard:loaded', { type: location || 'all' });
-      },
-      error: function() {
-        console.log('Error occured getting the tags collection - try refreshing your page');
-      }
-    });
+    Origin.sidebar.addView(new ProjectsSidebarView().$el);
+    Origin.trigger('dashboard:loaded', { type: location || 'all' });
   });
 
   Origin.on('dashboard:loaded', function (options) {

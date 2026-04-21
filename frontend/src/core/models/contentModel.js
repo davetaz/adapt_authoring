@@ -22,7 +22,29 @@ define(function(require) {
       var childTypes = _.isArray(this._childTypes) ? this._childTypes : [this._childTypes];
       // has to be a plain old array because we may have multiple model types
       var children = [];
+      var cache = Origin.editor && Origin.editor.pageStructureCache;
+
       Helpers.forParallelAsync(childTypes, _.bind(function(childType, index, done) {
+        var usedCache = false;
+
+        // Try to satisfy from cache first (used by the editor page view)
+        if (cache) {
+          // cache keys are singular type names matching content collections
+          var bucket = cache[childType];
+          if (bucket) {
+            var cachedChildren = bucket[this.get('_id')] || [];
+            if (cachedChildren.length) {
+              children = children.concat(cachedChildren);
+              usedCache = true;
+            }
+          }
+        }
+
+        if (usedCache) {
+          return done();
+        }
+
+        // Fallback to normal API call
         (new ContentCollection(null, {
           _type: childType,
           _parentId: this.get('_id')

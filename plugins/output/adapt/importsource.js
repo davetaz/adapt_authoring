@@ -170,6 +170,9 @@ function ImportSource(req, done) {
           var fileStat = fs.statSync(assetPath);
           var assetTitle = assetName;
           var assetDescription = assetName;
+          var assetSource = "unknown";
+          var assetLicence = "unknown";
+          var assetAttribution = "unknown";
           var assetJson = assetsJson[assetName];
           var tags = [];
 
@@ -180,6 +183,9 @@ function ImportSource(req, done) {
             size: fileStat["size"],
             filename: assetName,
             description: assetDescription,
+	           source: assetSource,
+	           licence: assetLicence,
+            attribution: assetAttribution,
             path: assetPath,
             tags: tags,
             repository: repository,
@@ -194,6 +200,9 @@ function ImportSource(req, done) {
             fileMeta.title = assetJson.title;
             fileMeta.description = assetJson.description;
             fileMeta.tags = assetTags;
+            if (assetJson.source) { fileMeta.source = assetJson.source; } else { fileMeta.source = "unknown"; }
+            if (assetJson.licence) { fileMeta.licence = assetJson.licence; } else { fileMeta.licence = "unknown"; }
+            if (assetJson.attribution) { fileMeta.attribution = assetJson.attribution; } else { fileMeta.attribution = "unknown"; }
             helpers.importAsset(fileMeta, metadata, doneAsset);
           });
         }, doneAssetFolder);

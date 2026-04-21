@@ -15,6 +15,24 @@ define(function(require) {
       this.on('reset', this.loadedData, this);
     },
 
+    fetch: function(options) {
+      options = options || {};
+      var cache = Origin.editor && Origin.editor.pageStructureCache;
+
+      // If we have a page-structure cache (editor page view) and this collection
+      // matches one of the cached child types with a known parentId, satisfy
+      // the fetch from cache instead of hitting the API.
+      if (cache && this._parentId && cache[this._type] && cache[this._type][this._parentId]) {
+        this.reset(cache[this._type][this._parentId]);
+        if (options.success) {
+          options.success(this);
+        }
+        return;
+      }
+
+      return Backbone.Collection.prototype.fetch.call(this, options);
+    },
+
     buildQuery: function() {
       var query = '';
       if(this._courseId) {

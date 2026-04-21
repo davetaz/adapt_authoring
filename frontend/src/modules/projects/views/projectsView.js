@@ -20,15 +20,13 @@ define(function(require){
       this.settings.preferencesKey = 'dashboard';
       this.initUserPreferences();
       this.initEventListeners();
-      this.initPaging();
+      // Load all matching projects in a single request (no infinite scroll)
+      this.resetCollection(this.setViewToReady);
     },
 
     initEventListeners: function() {
-      this._doLazyScroll = _.throttle(this.doLazyScroll, 250).bind(this);
-      this._onResize = _.debounce(this.onResize, 250).bind(this);
-
       this.listenTo(Origin, {
-        'window:resize dashboard:refresh': this._onResize,
+        'dashboard:refresh': _.debounce(this.resetCollection.bind(this, this.setViewToReady), 250),
         'dashboard:dashboardSidebarView:filterBySearch': function(text) { this.doFilter(text) },
         'dashboard:dashboardSidebarView:filterByTags': function(tags) { this.doFilter(null, tags) },
         'dashboard:sort:asc': function() { this.doSort('asc'); },
@@ -41,8 +39,6 @@ define(function(require){
       }, this);
 
       this.listenTo(this.collection, 'add', this.appendProjectItem);
-
-      $('.contentPane').on('scroll', this._doLazyScroll);
     },
 
     initUserPreferences: function() {
@@ -70,28 +66,6 @@ define(function(require){
       return prefs;
     },
 
-    initPaging: function() {
-      if(this.resizeTimer) {
-        clearTimeout(this.resizeTimer);
-        this.resizeTimer = -1;
-      }
-      // we need to load one course first to check page size
-      this.pageSize = 1;
-      this.resetCollection(function(collection) {
-        var containerHeight = $(window).height()-this.$el.offset().top;
-        var containerWidth = this.$('.projects-inner').width();
-        var itemHeight = $('.project-list-item').outerHeight(true);
-        var itemWidth = $('.project-list-item').outerWidth(true);
-        var columns = Math.floor(containerWidth/itemWidth);
-        var rows = Math.floor(containerHeight/itemHeight);
-        // columns stack nicely, but need to add extra row if it's not a clean split
-        if((containerHeight % itemHeight) > 0) rows++;
-        this.pageSize = columns*rows;
-        // need another reset to get the actual pageSize number of items
-        this.resetCollection(this.setViewToReady);
-      }.bind(this));
-    },
-
     getProjectsContainer: function() {
       return this.$('.projects-list');
     },
@@ -115,48 +89,132 @@ define(function(require){
 
     resetCollection: function(cb) {
       this.emptyProjectsContainer();
-      this.fetchCount = 0;
-      this.shouldStopFetches = false;
+      this.showLoading();
       this.collection.reset();
       this.fetchCollection(cb);
     },
 
     fetchCollection: function(cb) {
-      if(this.shouldStopFetches) {
-        return;
-      }
-      this.isCollectionFetching = true;
-
       this.collection.fetch({
         data: {
-          search: _.extend(this.search, { tags: { $all: this.tags } }),
           operators : {
-            skip: this.fetchCount,
-            limit: this.pageSize,
             sort: this.sort,
             collation: { locale: navigator.language.substring(0, 2) }
           }
         },
         success: function(collection, response) {
-          this.isCollectionFetching = false;
-          this.fetchCount += response.length;
-          // stop further fetching if this is the last page
-          if(response.length < this.pageSize) this.shouldStopFetches = true;
+          this.hideLoading();
+          this.updateAvailableTags();
 
-          this.$('.no-projects').toggleClass('display-none', this.fetchCount > 0);
+          // If user has already applied a text or tag filter, reapply it.
+          // Otherwise, leave the initially rendered list as-is for faster first paint.
+          var hasFilters = (this.filterText && this.filterText.length) || (this.tags && this.tags.length);
+          if (hasFilters) {
+            this.applyFilters();
+          } else {
+            this.$('.no-projects').toggleClass('display-none', collection.length > 0);
+          }
+
           if(typeof cb === 'function') cb(collection);
+        }.bind(this),
+        error: function() {
+          this.hideLoading();
         }.bind(this)
       });
     },
 
-    doLazyScroll: function(e) {
-      if(this.isCollectionFetching) {
-        return;
-      }
-      var $el = $(e.currentTarget);
-      var pxRemaining = this.getProjectsContainer().height() - ($el.scrollTop() + $el.height());
-      // we're at the bottom, fetch more
-      if (pxRemaining <= 0) this.fetchCollection();
+    updateAvailableTags: function() {
+      var tagMap = {};
+      var noTagCount = 0;
+
+      this.collection.each(function(model) {
+        var tags = model.get('tags') || [];
+        if (!tags.length) {
+          noTagCount++;
+        }
+        _.each(tags, function(tag) {
+          var id = tag._id || tag.id;
+          if (!id) return;
+          if (!tagMap[id]) {
+            tagMap[id] = {
+              id: id,
+              title: tag.title || '',
+              count: 0
+            };
+          }
+          tagMap[id].count++;
+        });
+      });
+
+      var tagsArray = _.values(tagMap);
+
+      // Special pseudo-tag for courses with no tags
+      tagsArray.push({
+        id: '__none__',
+        title: Origin.l10n.t('app.notags') || 'No tags',
+        count: noTagCount
+      });
+
+      Origin.trigger('dashboard:tags:update', tagsArray);
+    },
+
+    /**
+     * Client-side filtering of projects (DataTables-style global search):
+     * - text search matches course title, creator name, and tag titles
+     * - tag filter (from sidebar) is applied in the same pass
+     */
+    applyFilters: function() {
+      var text = (this.filterText || '').toLowerCase();
+      var selectedIds = this.tags || [];
+      var NONE_ID = '__none__';
+      var wantNoTags = _.contains(selectedIds, NONE_ID);
+      var normalTagIds = _.filter(selectedIds, function(id) { return id !== NONE_ID; });
+
+      var filtered = this.collection.filter(function(model) {
+        // Tag filter: union of selected tags and "no tags" pseudo-tag
+        if (normalTagIds.length || wantNoTags) {
+          var courseTags = model.get('tags') || [];
+          var courseTagIds = _.pluck(courseTags, '_id');
+
+          var matchesNormal = normalTagIds.length
+            ? _.some(normalTagIds, function(id) {
+                return _.contains(courseTagIds, id);
+              })
+            : false;
+
+          var matchesNoTags = wantNoTags && courseTagIds.length === 0;
+
+          if (!matchesNormal && !matchesNoTags) return false;
+        }
+
+        if (!text) return true;
+
+        var title = (model.get('title') || '').toString().toLowerCase();
+        var creatorName = (model.get('creatorName') || '').toString().toLowerCase();
+        var tags = model.get('tags') || [];
+        var tagMatch = _.some(tags, function(tag) {
+          return (tag.title || '').toString().toLowerCase().indexOf(text) !== -1;
+        });
+
+        return title.indexOf(text) !== -1 ||
+               creatorName.indexOf(text) !== -1 ||
+               tagMatch;
+      });
+
+      this.emptyProjectsContainer();
+      _.each(filtered, function(model) {
+        this.appendProjectItem(model);
+      }, this);
+
+      this.$('.no-projects').toggleClass('display-none', filtered.length > 0);
+    },
+
+    showLoading: function() {
+      this.$('.projects-loading').removeClass('display-none');
+    },
+
+    hideLoading: function() {
+      this.$('.projects-loading').addClass('display-none');
     },
 
     doLayout: function(layout) {
@@ -181,29 +239,45 @@ define(function(require){
           this.sort = { title: 1 };
       }
       this.setUserPreference('sort', sort);
-      if(fetch !== false) this.resetCollection();
+      if(fetch === false) return;
+
+      // Client-side sort of the already-fetched collection
+      switch(sort) {
+        case 'updated':
+          this.collection.comparator = function(model) {
+            // newer first
+            return -new Date(model.get('updatedAt')).getTime();
+          };
+          break;
+        case 'desc':
+          this.collection.comparator = function(model) {
+            return model.get('title') ? model.get('title').toString().toLowerCase() * -1 : '';
+          };
+          break;
+        case 'asc':
+        default:
+          this.collection.comparator = function(model) {
+            return model.get('title') ? model.get('title').toString().toLowerCase() : '';
+          };
+      }
+
+      this.collection.sort();
+      this.applyFilters();
     },
 
     doFilter: function(text, tags, fetch) {
       text = text || '';
       this.filterText = text;
-      this.search = this.convertFilterTextToPattern(text);
       this.setUserPreference('search', text, true);
 
       tags = tags || [];
       this.tags = _.pluck(tags, 'id');
       this.setUserPreference('tags', tags, true);
 
-      if(fetch !== false) this.resetCollection();
-    },
-
-    onResize: function() {
-      this.initPaging();
+      if(fetch !== false) this.applyFilters();
     },
 
     remove: function() {
-      $('.contentPane').off('scroll', this._doLazyScroll);
-
       OriginView.prototype.remove.apply(this, arguments);
     }
 

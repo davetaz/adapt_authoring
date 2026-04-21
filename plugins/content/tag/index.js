@@ -79,7 +79,7 @@ function initialize () {
         }
 
         var searchParams;
-        if (req.query.hasOwnProperty('term')){
+        if (Object.prototype.hasOwnProperty.call(req.query, 'term')){
           // create regex for "term" and ignore case
           var termRegex = new RegExp('^' + escapeRegExp(req.query.term), 'i');
           searchParams = { _isDeleted:false, title:termRegex };

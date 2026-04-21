@@ -38,6 +38,8 @@ define(function(require) {
       this.currentCourseId = Origin.editor.data.course.get('_id');
       this.currentCourse = Origin.editor.data.course;
       this.currentPageId = options.currentPageId;
+      // clear any cached page structure when (re)rendering editor
+      Origin.editor.pageStructureCache = null;
 
       this.listenTo(Origin, {
         'editorView:refreshView': this.setupEditor,
@@ -338,20 +340,59 @@ define(function(require) {
     },
 
     renderEditorPage: function() {
-      (new ContentObjectModel({
-        _id: this.currentPageId
-      })).fetch({
-        success: function(model) {
-          var view = new EditorPageView({ model: model });
-          this.$('.editor-inner').html(view.$el);
-        },
-        error: function() {
+      var pageId = this.currentPageId;
+      var url = 'api/content/pageStructure/' + pageId;
+
+      $.get(url, _.bind(function(data) {
+        if (!data || data.success === false || !data.page) {
           Origin.Notify.alert({
             type: 'error',
-            text: 'app.errorfetchingdata'
+            text: Origin.l10n.t('app.errorfetchingdata')
           });
+          return;
         }
-      });
+
+        // Build models and cache by parentId for fast lookup in fetchChildren
+        var cache = {
+          article: {},
+          block: {},
+          component: {}
+        };
+
+        var pageModel = new ContentObjectModel(data.page);
+
+        _.each(data.articles || [], function(articleData) {
+          var articleModel = new ArticleModel(articleData);
+          var parentId = articleModel.get('_parentId');
+          if (!cache.article[parentId]) cache.article[parentId] = [];
+          cache.article[parentId].push(articleModel);
+        });
+
+        _.each(data.blocks || [], function(blockData) {
+          var blockModel = new BlockModel(blockData);
+          var parentId = blockModel.get('_parentId');
+          if (!cache.block[parentId]) cache.block[parentId] = [];
+          cache.block[parentId].push(blockModel);
+        });
+
+        _.each(data.components || [], function(componentData) {
+          var componentModel = new ComponentModel(componentData);
+          var parentId = componentModel.get('_parentId');
+          if (!cache.component[parentId]) cache.component[parentId] = [];
+          cache.component[parentId].push(componentModel);
+        });
+
+        // Expose cache for ContentModel.fetchChildren
+        Origin.editor.pageStructureCache = cache;
+
+        var view = new EditorPageView({ model: pageModel });
+        this.$('.editor-inner').html(view.$el);
+      }, this)).fail(_.bind(function() {
+        Origin.Notify.alert({
+          type: 'error',
+          text: Origin.l10n.t('app.errorfetchingdata')
+        });
+      }, this));
     },
 
     /**

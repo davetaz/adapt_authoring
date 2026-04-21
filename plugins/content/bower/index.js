@@ -511,7 +511,7 @@ BowerPlugin.prototype.initialize = function (plugin) {
     // upgrade a plugin/plugins
     rest.post('/' + plugin.type + '/update', function (req, res, next) {
       var upgradeTargets = req.body.targets;
-      if (!util.isArray(upgradeTargets)) {
+      if (!Array.isArray(upgradeTargets)) {
         res.statusCode = 400;
         return res.json({ success: false, message: 'targets parameter should be an array' });
       }

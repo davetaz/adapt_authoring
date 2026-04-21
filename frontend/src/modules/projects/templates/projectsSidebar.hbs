@@ -39,8 +39,16 @@
         </div>
       </div>
 
-      <button class="projects-sidebar-add-tag sidebar-filter-button action-secondary">
-        <span class="projects-sidebar-add-tag-inner">{{t 'app.searchbytag'}}</span>
-      </button>
+      <div class="sidebar-row sidebar-tag-header sidebar-row-input">
+        <div class="sidebar-tag-header-inner">
+          <span>{{t 'app.filterbytags'}}</span>
+        </div>
+      </div>
+
+      <div class="sidebar-row sidebar-tags-list sidebar-row-input">
+        <div class="projects-sidebar-tags-list">
+          {{!-- Tag checkboxes are rendered client-side by ProjectsSidebarView --}}
+        </div>
+      </div>
     </div>
 </div>
