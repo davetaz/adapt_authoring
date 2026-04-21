@@ -31,12 +31,66 @@ var DASHBOARD_COURSE_FIELDS = [
     '_id', '_tenantId', '_type', '_isShared', 'title', 'heroImage',
     'updatedAt', 'updatedBy', 'createdAt', 'createdBy', 'tags', '_shareWithUsers'
 ];
+var DASHBOARD_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+var dashboardCache = new Map();
 
-function doQuery(req, res, andOptions, next) {
-  if(!next) {
+function stableStringify(value) {
+  if (!value || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return '[' + value.map(stableStringify).join(',') + ']';
+  }
+  return '{' + Object.keys(value).sort().map(function(key) {
+    return JSON.stringify(key) + ':' + stableStringify(value[key]);
+  }).join(',') + '}';
+}
+
+function getDashboardCacheKey(cacheScope, req, query, options) {
+  var user = req.user || {};
+  return [
+    cacheScope,
+    user._id || '',
+    user._tenantId || '',
+    stableStringify(query || {}),
+    stableStringify(options && options.operators || {})
+  ].join('|');
+}
+
+function getDashboardCache(cacheKey) {
+  var cached = dashboardCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+  if (Date.now() - cached.createdAt > DASHBOARD_CACHE_TTL_MS) {
+    dashboardCache.delete(cacheKey);
+    return null;
+  }
+  return cached.results;
+}
+
+function setDashboardCache(cacheKey, results) {
+  dashboardCache.set(cacheKey, {
+    createdAt: Date.now(),
+    results: results
+  });
+}
+
+function clearDashboardCache() {
+  dashboardCache.clear();
+}
+
+function doQuery(req, res, cacheScope, andOptions, next) {
+  if (typeof cacheScope !== 'string') {
+    next = andOptions;
+    andOptions = cacheScope;
+    cacheScope = 'course';
+  }
+  if(typeof andOptions === 'function') {
     next = andOptions;
     andOptions = [];
   }
+  andOptions = andOptions || [];
   const options = Object.assign({}, req.body, req.query);
   options.search = Object.assign({}, req.body.search, req.query.search);
   const search = options.search || {};
@@ -61,10 +115,17 @@ function doQuery(req, res, andOptions, next) {
     options.populate = Object.assign({ 'createdBy': 'email firstName lastName' }, options.populate);
     options.jsonOnly = true;
 
+    var cacheKey = getDashboardCacheKey(cacheScope, req, query, options);
+    var cachedResults = getDashboardCache(cacheKey);
+    if (cachedResults) {
+      return res.status(200).json(cachedResults);
+    }
+
     new CourseContent().retrieve(query, options, function (err, results) {
       if (err) {
         return res.status(500).json(err);
       }
+      setDashboardCache(cacheKey, results);
       return res.status(200).json(results);
     });
   });
@@ -79,11 +140,11 @@ function initialize () {
   var app = origin();
   app.once('serverStarted', function(server) {
     // force search to use only courses created by current user
-    rest.get('/my/course', (req, res, next) => doQuery(req, res, [{ createdBy: req.user._id }], next));
+    rest.get('/my/course', (req, res, next) => doQuery(req, res, 'my', [{ createdBy: req.user._id }], next));
     // Only return courses which have been shared
     rest.get('/shared/course', (req, res, next) => {
       req.body.search = Object.assign({}, req.body.search, { $or: [{ _shareWithUsers: req.user._id }, { _isShared: true }] });
-      doQuery(req, res, next);
+      doQuery(req, res, 'shared', next);
     });
     /**
      * API Endpoint to duplicate a course
@@ -109,6 +170,7 @@ function initialize () {
   });
 
   app.contentmanager.addContentHook('update', 'course', {when:'pre'}, function (data, next) {
+    clearDashboardCache();
     if (data[1].hasOwnProperty('themeSettings') || data[1].hasOwnProperty('customStyle')) {
       var tenantId = usermanager.getCurrentUser().tenant._id;
 
@@ -116,6 +178,13 @@ function initialize () {
     }
 
     next(null, data);
+  });
+
+  ['create', 'destroy'].forEach(function(action) {
+    app.contentmanager.addContentHook(action, 'course', { when: 'post' }, function(data, next) {
+      clearDashboardCache();
+      next(null, data);
+    });
   });
 
   ['component'].forEach(function (contentType) {

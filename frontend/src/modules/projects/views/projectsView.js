@@ -18,9 +18,10 @@ define(function(require){
 
     postRender: function() {
       this.settings.preferencesKey = 'dashboard';
+      this.pageSize = 50;
       this.initUserPreferences();
       this.initEventListeners();
-      // Load all matching projects in a single request (no infinite scroll)
+      // Load the first batch quickly, then continue loading in the background.
       this.resetCollection(this.setViewToReady);
     },
 
@@ -90,34 +91,61 @@ define(function(require){
     resetCollection: function(cb) {
       this.emptyProjectsContainer();
       this.showLoading();
+      this.fetchCount = 0;
+      this.shouldStopFetches = false;
+      this.isCollectionFetching = false;
+      this._hasRenderedFirstBatch = false;
       this.collection.reset();
       this.fetchCollection(cb);
     },
 
     fetchCollection: function(cb) {
+      if (this.isCollectionFetching || this.shouldStopFetches) {
+        return;
+      }
+      this.isCollectionFetching = true;
       this.collection.fetch({
+        remove: false,
+        merge: false,
         data: {
           operators : {
+            skip: this.fetchCount,
+            limit: this.pageSize,
             sort: this.sort,
             collation: { locale: navigator.language.substring(0, 2) }
           }
         },
         success: function(collection, response) {
-          this.hideLoading();
-          this.updateAvailableTags();
-
-          // If user has already applied a text or tag filter, reapply it.
-          // Otherwise, leave the initially rendered list as-is for faster first paint.
-          var hasFilters = (this.filterText && this.filterText.length) || (this.tags && this.tags.length);
-          if (hasFilters) {
-            this.applyFilters();
-          } else {
-            this.$('.no-projects').toggleClass('display-none', collection.length > 0);
+          this.isCollectionFetching = false;
+          this.fetchCount += response.length;
+          if (response.length < this.pageSize) {
+            this.shouldStopFetches = true;
           }
 
-          if(typeof cb === 'function') cb(collection);
+          if (!this._hasRenderedFirstBatch) {
+            this._hasRenderedFirstBatch = true;
+            this.hideLoading();
+            // If user has already applied a text or tag filter, reapply it.
+            // Otherwise, leave the initially rendered list as-is for faster first paint.
+            var hasFilters = (this.filterText && this.filterText.length) || (this.tags && this.tags.length);
+            if (hasFilters) {
+              this.applyFilters();
+            } else {
+              this.$('.no-projects').toggleClass('display-none', collection.length > 0);
+            }
+            if(typeof cb === 'function') cb(collection);
+          }
+
+          if (!this.shouldStopFetches) {
+            // Yield to browser/UI thread before pulling the next batch.
+            return setTimeout(this.fetchCollection.bind(this), 0);
+          }
+
+          // Defer tag aggregation so the project list paints first.
+          setTimeout(this.updateAvailableTags.bind(this), 0);
         }.bind(this),
         error: function() {
+          this.isCollectionFetching = false;
           this.hideLoading();
         }.bind(this)
       });
