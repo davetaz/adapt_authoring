@@ -2,6 +2,7 @@
 define(function(require) {
   var Origin = require('core/origin');
   var SidebarItemView = require('modules/sidebar/views/sidebarItemView');
+  var Handlebars = require('handlebars');
 
   var ProjectsSidebarView = SidebarItemView.extend({
     settings: {
@@ -14,18 +15,15 @@ define(function(require) {
       'click .projects-sidebar-my-courses': 'gotoMyCourses',
       'click .projects-sidebar-shared-courses': 'gotoSharedCourses',
       'click .sidebar-filter-clear': 'clearFilterInput',
-      'click .projects-sidebar-tag': 'onFilterButtonClicked',
-      'click .projects-sidebar-add-tag': 'onAddTagClicked',
-      'click .projects-sidebar-row-filter': 'onFilterRemovedClicked',
-      'keyup .projects-sidebar-filter-search-input': 'filterProjectsByTitle'
+      'keyup .projects-sidebar-filter-search-input': 'filterProjectsByTitle',
+      'change .projects-sidebar-tag-checkbox': 'onTagCheckboxChanged'
     },
 
     postRender: function() {
-      this.listenTo(Origin, 'sidebarFilter:filterByTags', this.filterProjectsByTags);
-      this.listenTo(Origin, 'sidebarFilter:addTagToSidebar', this.addTagToSidebar);
+      this.listenTo(Origin, 'dashboard:tags:update', this.onTagsUpdate);
       this.listenTo(Origin, 'sidebar:update:ui', this.updateUI);
       this.tags = [];
-      this.usedTags = [];
+      this.availableTags = [];
     },
 
     highlightSearchBox: function(){
@@ -42,7 +40,8 @@ define(function(require) {
       this.highlightSearchBox();
       if (userPreferences.tags) {
         this.tags = userPreferences.tags;
-        _.each(userPreferences.tags, this.addTagToSidebar, this);
+        // When tags data arrives from the dashboard, checkboxes will be rendered
+        // and selection restored using this.tags
       }
     },
 
@@ -78,81 +77,63 @@ define(function(require) {
       this.highlightSearchBox();
     },
 
-    onFilterButtonClicked: function(event) {
-      event && event.preventDefault();
-      // toggle filter
-      $currentTarget = $(event.currentTarget);
-      var filterType = $currentTarget.attr('data-tag');
-      if ($currentTarget.hasClass('selected')) {
-        $currentTarget.removeClass('selected');
-        Origin.trigger('dashboard:sidebarFilter:remove', filterType);
-      } else {
-        $currentTarget.addClass('selected');
-        Origin.trigger('dashboard:sidebarFilter:add', filterType);
-      }
-    },
-
-    onAddTagClicked: function(event) {
-      event && event.preventDefault();
-      var availableTags = [];
-      // create an array of unique project tags
-      this.collection.each(function(tag) {
-        var availableTagsTitles = _.pluck(availableTags, 'title');
-        var usedTagTitles = _.pluck(this.usedTags, 'title');
-        if (!_.contains(availableTagsTitles, tag.get('title')) && !_.contains(usedTagTitles, tag.get('title'))) {
-          availableTags.push(tag.attributes);
-        }
-      }, this);
-
-      Origin.trigger('sidebar:sidebarFilter:add', {
-        title: Origin.l10n.t('app.filterbytags'),
-        items: availableTags
-      });
-    },
-
-    onTagClicked: function(event) {
-      var tag = $(event.currentTarget).toggleClass('selected').attr('data-tag');
-      this.filterProjectsByTags(tag);
-    },
-
-    filterProjectsByTags: function(tag) {
-      // toggle tag
-      if (_.findWhere(this.tags, { id: tag.id } )) {
-        this.tags = _.reject(this.tags, function(tagItem) {
-          return tagItem.id === tag.id;
+    onTagsUpdate: function(tags) {
+      this.availableTags = tags || [];
+      // If no saved selection, default to all tags selected so the view
+      // initially shows the full set of courses.
+      if (!this.tags || !this.tags.length) {
+        this.tags = _.map(this.availableTags, function(tag) {
+          return { id: tag.id, title: tag.title };
         });
-      } else {
-        this.tags.push(tag);
       }
-      Origin.trigger('dashboard:dashboardSidebarView:filterByTags', this.tags);
+      this.renderTagCheckboxes();
     },
 
-    addTagToSidebar: function(tag) {
-      this.usedTags.push(tag);
+    renderTagCheckboxes: function() {
+      var $list = this.$('.projects-sidebar-tags-list');
+      if (!$list.length) return;
 
-      var template = Handlebars.templates['sidebarRowFilter'];
-      var data = {
-        rowClasses: 'sidebar-row-filter',
-        buttonClasses:'projects-sidebar-row-filter',
-        tag: tag
-      };
+      $list.empty();
 
-      this.$('.projects-sidebar-add-tag').parent().after(template(data));
+      var selectedIds = _.pluck(this.tags || [], 'id');
+
+      _.each(this.availableTags, function(tag) {
+        var id = tag.id;
+        var title = tag.title || '';
+        var count = tag.count || 0;
+        var isChecked = _.contains(selectedIds, id);
+        var escapedTitle = Handlebars.Utils.escapeExpression(title);
+
+        var html = [
+          '<div class="sidebar-tag">',
+            '<label>',
+              '<input type="checkbox" class="projects-sidebar-tag-checkbox" value="', id,
+              '" data-title="', escapedTitle, '"', (isChecked ? ' checked="checked"' : ''), ' /> ',
+              escapedTitle, ' (', count, ')',
+            '</label>',
+          '</div>'
+        ].join('');
+
+        $list.append(html);
+      }, this);
     },
 
-    onFilterRemovedClicked: function(event) {
-      var tag = {
-        title: $(event.currentTarget).attr('data-title'),
-        id: $(event.currentTarget).attr('data-id')
-      }
-      // Remove this tag from the usedTags
-      this.usedTags = _.reject(this.usedTags, function(item) {
-        return item.id === tag.id;
+    onTagCheckboxChanged: function(event) {
+      event && event.preventDefault();
+      this.updateSelectedTagsFromUI();
+    },
+
+    updateSelectedTagsFromUI: function() {
+      var selected = [];
+      this.$('.projects-sidebar-tag-checkbox:checked').each(function(index, el) {
+        var $el = $(el);
+        selected.push({
+          id: $el.val(),
+          title: $el.attr('data-title')
+        });
       });
-
-      this.filterProjectsByTags(tag);
-
-      $(event.currentTarget).parent().remove();
+      this.tags = selected;
+      Origin.trigger('dashboard:dashboardSidebarView:filterByTags', this.tags);
     }
   }, {
     template: 'projectsSidebar'
