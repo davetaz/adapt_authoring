@@ -56,6 +56,11 @@ define(function(require){
           _sortOrder: $('.paste-' + type, this.$el).attr('data-sort-order')
         },
         success: function() {
+          // Reordering/moving via raw AJAX bypasses model sync events.
+          // Invalidate cached page structure so subsequent renders fetch fresh order.
+          if (Origin.editor) {
+            Origin.editor.pageStructureCache = null;
+          }
           var eventPrefix = 'editorView:move' + Helpers.capitalise(type) + ':';
           Origin.trigger(eventPrefix + droppedOnId);
           // notify the old parent that the child's gone

@@ -43,6 +43,11 @@ define(function(require){
             url:'api/content/component/' + componentId,
             data: newData,
             success: function(jqXHR, textStatus, errorThrown) {
+              // Reordering/moving via raw AJAX bypasses model sync events.
+              // Invalidate cached page structure so subsequent renders fetch fresh data.
+              if (Origin.editor) {
+                Origin.editor.pageStructureCache = null;
+              }
               // Re-render the move-from block
               Origin.trigger('editorView:moveComponent:' + blockId);
               if (blockId !== parentId) {
